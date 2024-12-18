@@ -5,16 +5,57 @@ const { Board: BoardModel, Thread: ThreadModel, Reply: ReplyModel } = require(".
 module.exports = function (app) {
   app
     .route("/api/threads/:board")
+    .get(async (req, res) => {
+      try {
+        const board = req.params.board;
+        const data = await BoardModel.findOne({ name: board });
+
+        if (!data) {
+          return res.json({ error: "No board with this name" });
+        }
+
+        // Sort threads by bumped_on (most recent first) and get the 10 most recent threads
+        const threads = data.threads
+          .sort((a, b) => new Date(b.bumped_on) - new Date(a.bumped_on))  // Sort by bumped_on date
+          .slice(0, 10)  // Only return the 10 most recent threads
+          .map((thread) => {
+            // Get the 3 most recent replies
+            const { _id, text, created_on, bumped_on, replies } = thread;
+            return {
+              _id,
+              text,
+              created_on,
+              bumped_on,
+              replies: replies.slice(0, 3).map((reply) => {
+                const { _id, text, created_on } = reply; // Exclude reported and delete_password
+                return {
+                  _id,
+                  text,
+                  created_on,
+                };
+              }),
+              replycount: thread.replies.length,  // Total number of replies
+            };
+          });
+
+        res.json(threads);
+      } catch (err) {
+        console.log(err);
+        res.json({ error: "There was an error fetching threads" });
+      }
+    })
     .post(async (req, res) => {
       try {
         const { text, delete_password } = req.body;
         let board = req.body.board || req.params.board;
+        const timestamp = new Date().toISOString(); // Create a fixed timestamp
+
         const newThread = new ThreadModel({
           text: text,
           delete_password: delete_password,
           replies: [],
-          created_on: new Date().toISOString(),  // Consistent ISO format for created_on
-          bumped_on: new Date().toISOString(),   // Consistent ISO format for bumped_on
+          created_on: timestamp,  // Use fixed timestamp
+          bumped_on: timestamp,   // Use fixed timestamp
         });
 
         const boardData = await BoardModel.findOne({ name: board });
@@ -37,37 +78,6 @@ module.exports = function (app) {
         res.send("There was an error saving in post");
       }
     })
-    .get(async (req, res) => {
-      try {
-        const board = req.params.board;
-        const data = await BoardModel.findOne({ name: board });
-
-        if (!data) {
-          return res.json({ error: "No board with this name" });
-        }
-
-        const threads = data.threads
-          .sort((a, b) => new Date(b.bumped_on) - new Date(a.bumped_on))  // Sort by bumped_on date
-          .slice(0, 10)  // Only return the 10 most recent threads
-          .map((thread) => {
-            const { _id, text, created_on, bumped_on, reported, delete_password, replies } = thread;
-            return {
-              _id,
-              text,
-              created_on,
-              bumped_on,
-              reported,
-              delete_password,
-              replies: replies.slice(0, 3),  // Return only the 3 most recent replies
-              replycount: thread.replies.length,
-            };
-          });
-        res.json(threads);
-      } catch (err) {
-        console.log(err);
-        res.json({ error: "There was an error fetching threads" });
-      }
-    })
     .put(async (req, res) => {
       try {
         const { report_id } = req.body;
@@ -79,12 +89,12 @@ module.exports = function (app) {
           return res.json({ error: "Board not found" });
         }
 
-        const date = new Date().toISOString();  // Use ISO format for bumped_on date
+        const timestamp = new Date().toISOString();  // Use fixed timestamp
         const reportedThread = boardData.threads.id(report_id);
 
         if (reportedThread) {
           reportedThread.reported = true;
-          reportedThread.bumped_on = date;
+          reportedThread.bumped_on = timestamp;
 
           await boardData.save();
           res.send("reported");  // Ensure response is 'reported'
@@ -129,10 +139,12 @@ module.exports = function (app) {
       try {
         const { thread_id, text, delete_password } = req.body;
         const board = req.params.board;
+        const timestamp = new Date().toISOString();  // Create a fixed timestamp for replies
+
         const newReply = new ReplyModel({
           text: text,
           delete_password: delete_password,
-          created_on: new Date().toISOString(),  // Consistent ISO format for replies
+          created_on: timestamp,  // Use fixed timestamp
         });
 
         const boardData = await BoardModel.findOne({ name: board });
@@ -141,9 +153,8 @@ module.exports = function (app) {
           return res.json({ error: "Board not found" });
         }
 
-        const date = new Date().toISOString();  // Ensure bumped_on date is updated with ISO format
         const threadToAddReply = boardData.threads.id(thread_id);
-        threadToAddReply.bumped_on = date;
+        threadToAddReply.bumped_on = timestamp;  // Ensure bumped_on date is updated with the same timestamp
         threadToAddReply.replies.push(newReply);
 
         await boardData.save();
@@ -232,5 +243,6 @@ module.exports = function (app) {
       }
     });
 };
+
 
 
